@@ -48,8 +48,6 @@
     "vite": "^5.4.14",
     "yalc": "^1.0.0-pre.53"
   },
-  "engines": {
-    "node": ">=20"
-  },
+  "engines": { "node": "20.20.2" },
   "packageManager": "npm@10.1.0"
 }

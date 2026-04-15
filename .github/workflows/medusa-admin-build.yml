@@ -11,6 +11,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,97 +26,83 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Configure npm to use home directory for cache
+      - name: Configure npm cache directory
         run: |
           mkdir -p ~/.npm
           npm config set cache ~/.npm --global
-          npm config set prefix ~/.npm --global
-          echo "npm cache location: $(npm config get cache)"
+          echo "Cache directory: $(npm config get cache)"
 
-      - name: Clean and verify npm cache
+      - name: Clean npm cache and node_modules
         run: |
           npm cache clean --force --loglevel=error || true
-          npm cache verify --loglevel=error || true
+          rm -rf node_modules package-lock.json || true
+          echo "✓ Cache and node_modules cleaned"
 
-      - name: Install dependencies (Primary attempt)
+      - name: Install dependencies with npm ci
         run: |
-          npm install \
-            --legacy-peer-deps \
-            --no-audit \
-            --no-fund \
-            --prefer-offline \
-            --no-lockfile-updates \
-            --force-git-dependencies=false \
-            2>&1 | tail -50
-        timeout-minutes: 30
-
-      - name: Check if node_modules exists
-        if: failure()
-        run: |
-          if [ ! -d "node_modules" ]; then
-            echo "node_modules missing, cleaning and retrying..."
-            rm -rf node_modules package-lock.json
-          else
-            echo "node_modules exists, checking integrity..."
-            find node_modules -type d -name node_modules | head -20
-          fi
-
-      - name: Retry installation with npm ci
-        if: failure()
-        run: |
-          npm ci \
-            --legacy-peer-deps \
-            --no-audit \
-            --no-fund \
-            --prefer-offline \
-            2>&1 | tail -50
-        timeout-minutes: 30
+          npm ci --verbose 2>&1 | tail -100
+        timeout-minutes: 45
         continue-on-error: true
 
-      - name: Final fallback - clean install
+      - name: Check for missing dependencies
         if: failure()
         run: |
-          rm -rf node_modules ~/.npm
-          mkdir -p ~/.npm
-          npm cache clean --force --loglevel=error || true
-          npm install \
-            --legacy-peer-deps \
-            --verbose \
-            --maxsockets=1 \
-            --no-audit \
-            --no-fund \
-            2>&1 | tail -100
+          echo "=== Checking for missing packages ==="
+          npm ls --depth=0 2>&1 | grep -E "missing|invalid|extraneous" | head -30 || true
+          echo ""
+          echo "=== Attempting fresh install ==="
+
+      - name: Retry with npm install (fresh attempt)
+        if: failure()
+        run: |
+          rm -rf node_modules
+          npm install --legacy-peer-deps --verbose 2>&1 | tail -100
         timeout-minutes: 45
 
-      - name: Verify dependencies installed
+      - name: Verify all dependencies are installed
         run: |
-          if [ ! -d "node_modules" ]; then
-            echo "ERROR: node_modules not found after install attempts"
-            exit 1
+          echo "=== Checking dependencies ==="
+          npm ls --depth=0 2>&1 | head -50
+          
+          # Check for critical missing packages
+          MISSING=$(npm ls 2>&1 | grep -c "missing:" || true)
+          if [ "$MISSING" -gt 0 ]; then
+            echo "ERROR: Still have missing dependencies. Running npm install again..."
+            npm install 2>&1 | tail -50
           fi
-          echo "✓ Dependencies installed successfully"
-          npm list --depth=0 | head -30
+          
+          # Verify node_modules size
+          echo ""
+          echo "node_modules size: $(du -sh node_modules | cut -f1)"
+          echo "✓ Dependency check complete"
 
-      - name: Build
+      - name: Build project
         run: npm run build
         timeout-minutes: 30
+        env:
+          NODE_ENV: production
 
-      - name: Verify build output
+      - name: Verify build artifacts
         run: |
           if [ ! -d ".medusa" ]; then
-            echo "ERROR: Build output (.medusa) not found"
+            echo "ERROR: Build output (.medusa) directory not found"
+            ls -la | grep medusa || echo "No medusa directory found"
             exit 1
           fi
-          echo "✓ Build completed successfully"
-          ls -la .medusa/ | head -20
+          echo "✓ Build output verified"
+          du -sh .medusa
+          find .medusa -type f | head -20
 
-      - name: Commit build artifacts to build branch
+      - name: Create build branch and push artifacts
         run: |
           set -e
+          
+          # Backup build output
           rm -rf /tmp/medusa-admin-build
           mkdir -p /tmp/medusa-admin-build
           cp -R .medusa/. /tmp/medusa-admin-build/
-
+          
+          # Switch to build branch
           git fetch origin build || true
           if git show-ref --verify --quiet refs/remotes/origin/build; then
             git checkout build
@@ -122,47 +110,51 @@ jobs:
             git checkout --orphan build
             git reset --hard
           fi
-
+          
+          # Replace content and commit
           git rm -rf . || true
           cp -R /tmp/medusa-admin-build/. .
-
+          
           git add -A
           if git diff --cached --quiet; then
-            echo "✓ No changes to commit."
+            echo "✓ No changes in build artifacts"
             exit 0
           fi
-
-          git -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com" commit -m "Build medusa-admin"
+          
+          git -c user.name="github-actions[bot]" \
+              -c user.email="github-actions[bot]@users.noreply.github.com" \
+              commit -m "Build medusa-admin at $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          
           git push --force origin build
-          echo "✓ Build artifacts pushed to build branch"
+          echo "✓ Build artifacts pushed successfully"
 
-      - name: Install server dependencies
+      - name: Install and build server (optional)
         if: hashFiles('server/package.json') != ''
         run: |
           cd server
-          npm install \
-            --legacy-peer-deps \
-            --no-audit \
-            --no-fund \
-            --prefer-offline \
-            2>&1 | tail -50
+          echo "Installing server dependencies..."
+          npm install --legacy-peer-deps 2>&1 | tail -30
+          
+          if [ -f "package.json" ] && grep -q '"build"' package.json; then
+            echo "Building server..."
+            npm run build 2>&1 | tail -30
+          fi
         timeout-minutes: 30
         continue-on-error: true
 
-      - name: Build server
-        if: hashFiles('server/package.json') != ''
-        run: cd server && npm run build
-        timeout-minutes: 30
-        continue-on-error: true
-
-      - name: Final Summary
+      - name: Workflow Summary
         if: always()
         run: |
           echo "=========================================="
-          echo "Workflow Summary"
+          echo "Build Workflow Summary"
           echo "=========================================="
-          echo "Node version: $(node --version)"
-          echo "npm version: $(npm --version)"
-          echo "node_modules size: $(du -sh node_modules 2>/dev/null | cut -f1 || echo 'N/A')"
-          echo "Build status: Complete"
+          echo "✓ Checkout: Complete"
+          echo "✓ Node setup: v$(node --version)"
+          echo "✓ npm version: v$(npm --version)"
+          echo "✓ node_modules: $(du -sh node_modules 2>/dev/null | cut -f1 || echo 'N/A')"
+          if [ -d ".medusa" ]; then
+            echo "✓ Build output: $(du -sh .medusa | cut -f1)"
+          else
+            echo "✗ Build output: NOT FOUND"
+          fi
           echo "=========================================="

@@ -23,28 +23,38 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # Don't use cache here since we may not have a lockfile yet
+          # No cache: npm here — it's causing the corruption
 
-      - name: Fix npm config (override any bad .npmrc prefix/cache)
+      - name: Fix npm config
         run: |
           npm config set cache ~/.npm --global
           npm config set prefix ~/.npm-global --global
-          echo "Cache: $(npm config get cache)"
-          echo "Prefix: $(npm config get prefix)"
-          # Show if there's a project-level .npmrc causing issues
-          cat .npmrc 2>/dev/null || echo "No project .npmrc found"
+          # Show project-level .npmrc if it exists
+          cat .npmrc 2>/dev/null && echo "^^^ project .npmrc" || echo "No project .npmrc"
+
+      - name: Clean everything before install
+        run: |
+          rm -rf node_modules
+          npm cache clean --force
+          echo "✓ Clean slate ready"
 
       - name: Install dependencies
         run: |
-          # If no lockfile exists, generate one first
           if [ ! -f "package-lock.json" ]; then
-            echo "No package-lock.json found — running npm install to generate one..."
+            echo "No lockfile — generating with npm install..."
             npm install --legacy-peer-deps
           else
             echo "Lockfile found — running npm ci..."
             npm ci
           fi
         timeout-minutes: 45
+
+      - name: Verify install
+        run: |
+          SIZE=$(du -sh node_modules | cut -f1)
+          echo "node_modules size: $SIZE"
+          # Sanity check — Medusa installs should be hundreds of MB
+          ls node_modules/.bin/medusa && echo "✓ medusa CLI found" || echo "✗ medusa CLI missing"
 
       - name: Build project
         run: npm run build
@@ -55,7 +65,7 @@ jobs:
       - name: Verify build artifacts
         run: |
           if [ ! -d ".medusa" ]; then
-            echo "ERROR: Build output (.medusa) not found"
+            echo "ERROR: .medusa not found"
             ls -la
             exit 1
           fi

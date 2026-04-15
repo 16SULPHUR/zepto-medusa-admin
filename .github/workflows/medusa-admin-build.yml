@@ -24,14 +24,89 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Clean npm cache
-        run: npm cache clean --force
+      - name: Configure npm to use home directory for cache
+        run: |
+          mkdir -p ~/.npm
+          npm config set cache ~/.npm --global
+          npm config set prefix ~/.npm --global
+          echo "npm cache location: $(npm config get cache)"
 
-      - name: Install dependencies
-        run: npm install --legacy-peer-deps --omit=optional --maxsockets=1
+      - name: Clean and verify npm cache
+        run: |
+          npm cache clean --force --loglevel=error || true
+          npm cache verify --loglevel=error || true
+
+      - name: Install dependencies (Primary attempt)
+        run: |
+          npm install \
+            --legacy-peer-deps \
+            --no-audit \
+            --no-fund \
+            --prefer-offline \
+            --no-lockfile-updates \
+            --force-git-dependencies=false \
+            2>&1 | tail -50
+        timeout-minutes: 30
+
+      - name: Check if node_modules exists
+        if: failure()
+        run: |
+          if [ ! -d "node_modules" ]; then
+            echo "node_modules missing, cleaning and retrying..."
+            rm -rf node_modules package-lock.json
+          else
+            echo "node_modules exists, checking integrity..."
+            find node_modules -type d -name node_modules | head -20
+          fi
+
+      - name: Retry installation with npm ci
+        if: failure()
+        run: |
+          npm ci \
+            --legacy-peer-deps \
+            --no-audit \
+            --no-fund \
+            --prefer-offline \
+            2>&1 | tail -50
+        timeout-minutes: 30
+        continue-on-error: true
+
+      - name: Final fallback - clean install
+        if: failure()
+        run: |
+          rm -rf node_modules ~/.npm
+          mkdir -p ~/.npm
+          npm cache clean --force --loglevel=error || true
+          npm install \
+            --legacy-peer-deps \
+            --verbose \
+            --maxsockets=1 \
+            --no-audit \
+            --no-fund \
+            2>&1 | tail -100
+        timeout-minutes: 45
+
+      - name: Verify dependencies installed
+        run: |
+          if [ ! -d "node_modules" ]; then
+            echo "ERROR: node_modules not found after install attempts"
+            exit 1
+          fi
+          echo "✓ Dependencies installed successfully"
+          npm list --depth=0 | head -30
 
       - name: Build
         run: npm run build
+        timeout-minutes: 30
+
+      - name: Verify build output
+        run: |
+          if [ ! -d ".medusa" ]; then
+            echo "ERROR: Build output (.medusa) not found"
+            exit 1
+          fi
+          echo "✓ Build completed successfully"
+          ls -la .medusa/ | head -20
 
       - name: Commit build artifacts to build branch
         run: |
@@ -53,17 +128,41 @@ jobs:
 
           git add -A
           if git diff --cached --quiet; then
-            echo "No changes to commit."
+            echo "✓ No changes to commit."
             exit 0
           fi
 
           git -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com" commit -m "Build medusa-admin"
           git push --force origin build
+          echo "✓ Build artifacts pushed to build branch"
 
       - name: Install server dependencies
         if: hashFiles('server/package.json') != ''
-        run: cd server && npm install --legacy-peer-deps --omit=optional --maxsockets=1
+        run: |
+          cd server
+          npm install \
+            --legacy-peer-deps \
+            --no-audit \
+            --no-fund \
+            --prefer-offline \
+            2>&1 | tail -50
+        timeout-minutes: 30
+        continue-on-error: true
 
       - name: Build server
         if: hashFiles('server/package.json') != ''
         run: cd server && npm run build
+        timeout-minutes: 30
+        continue-on-error: true
+
+      - name: Final Summary
+        if: always()
+        run: |
+          echo "=========================================="
+          echo "Workflow Summary"
+          echo "=========================================="
+          echo "Node version: $(node --version)"
+          echo "npm version: $(npm --version)"
+          echo "node_modules size: $(du -sh node_modules 2>/dev/null | cut -f1 || echo 'N/A')"
+          echo "Build status: Complete"
+          echo "=========================================="

@@ -28,6 +28,7 @@
     "@medusajs/framework": "2.13.1",
     "@medusajs/medusa": "2.13.1",
     "cheerio": "^1.2.0",
+    "jsonwebtoken": "^9.0.2",
     "node-fetch": "^3.3.2"
   },
   "devDependencies": {
@@ -36,6 +37,7 @@
     "@swc/jest": "^0.2.36",
     "@types/cheerio": "^1.0.0",
     "@types/jest": "^29.5.13",
+    "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^20.12.11",
     "@types/react": "^18.3.2",
     "@types/react-dom": "^18.2.25",

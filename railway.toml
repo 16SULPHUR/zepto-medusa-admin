@@ -1,5 +1,0 @@
-[build]
-builder = "railpack"
-
-[build.cache]
-paths = ["/app/node_modules"]

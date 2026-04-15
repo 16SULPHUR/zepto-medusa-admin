@@ -24,8 +24,11 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      - name: Clean npm cache
+        run: npm cache clean --force
+
       - name: Install dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps --omit=optional --maxsockets=1
 
       - name: Build
         run: npm run build
@@ -57,6 +60,10 @@ jobs:
           git -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com" commit -m "Build medusa-admin"
           git push --force origin build
 
-      - name: Install server dependencies on build branch
-        working-directory: server
-        run: npm install
+      - name: Install server dependencies
+        if: hashFiles('server/package.json') != ''
+        run: cd server && npm install --legacy-peer-deps --omit=optional --maxsockets=1
+
+      - name: Build server
+        if: hashFiles('server/package.json') != ''
+        run: cd server && npm run build

@@ -1,0 +1,58 @@
+name: Medusa Admin Build
+
+on:
+  push:
+    branches-ignore:
+      - build
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.20.2
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit build artifacts to build branch
+        run: |
+          set -e
+          rm -rf /tmp/medusa-admin-build
+          mkdir -p /tmp/medusa-admin-build
+          cp -R .medusa /tmp/medusa-admin-build/.medusa
+
+          git fetch origin build || true
+          if git show-ref --verify --quiet refs/remotes/origin/build; then
+            git checkout build
+          else
+            git checkout --orphan build
+            git reset --hard
+          fi
+
+          git rm -rf . || true
+          cp -R /tmp/medusa-admin-build/.medusa .medusa
+
+          git add -f .medusa
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com" commit -m "Build medusa-admin"
+          git push --force origin build

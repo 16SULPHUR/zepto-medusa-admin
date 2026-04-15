@@ -35,7 +35,7 @@ jobs:
           set -e
           rm -rf /tmp/medusa-admin-build
           mkdir -p /tmp/medusa-admin-build
-          cp -R .medusa /tmp/medusa-admin-build/.medusa
+          cp -R .medusa/. /tmp/medusa-admin-build/
 
           git fetch origin build || true
           if git show-ref --verify --quiet refs/remotes/origin/build; then
@@ -46,9 +46,9 @@ jobs:
           fi
 
           git rm -rf . || true
-          cp -R /tmp/medusa-admin-build/.medusa .medusa
+          cp -R /tmp/medusa-admin-build/. .
 
-          git add -f .medusa
+          git add -A
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
@@ -56,3 +56,7 @@ jobs:
 
           git -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com" commit -m "Build medusa-admin"
           git push --force origin build
+
+      - name: Install server dependencies on build branch
+        working-directory: server
+        run: npm install

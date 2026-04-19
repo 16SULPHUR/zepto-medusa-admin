@@ -11,7 +11,7 @@
 
 import { defineRouteConfig } from "@medusajs/admin-sdk"
 import { ArrowDownTray, CheckCircle, ExclamationCircle, Spinner, ShoppingBag } from "@medusajs/icons"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 
 // ── Medusa Admin SDK hooks ────────────────────────────────────────────────────
 import { sdk } from "../lib/sdk.js"
@@ -71,6 +71,43 @@ export default function ZeptoImportPage() {
   const [importedId, setImportedId] = useState("")
   const [editedProduct, setEditedProduct] = useState<ZeptoProduct | null>(null)
   const [aiMeta, setAiMeta] = useState<AiRefineMeta | null>(null)
+
+  const [salesChannels, setSalesChannels] = useState<any[]>([])
+  const [shippingProfiles, setShippingProfiles] = useState<any[]>([])
+  const [stockLocations, setStockLocations] = useState<any[]>([])
+
+  const [selectedSalesChannel, setSelectedSalesChannel] = useState("")
+  const [selectedShippingProfile, setSelectedShippingProfile] = useState("")
+  const [selectedStockLocation, setSelectedStockLocation] = useState("")
+
+  useEffect(() => {
+    async function loadDefaults() {
+      try {
+        const [scRes, spRes, slRes] = await Promise.all([
+          sdk.admin.salesChannel.list({ limit: 100 }),
+          sdk.admin.shippingProfile.list({ limit: 100 }),
+          sdk.admin.stockLocation.list({ limit: 100 })
+        ])
+        
+        setSalesChannels(scRes.sales_channels || [])
+        setShippingProfiles(spRes.shipping_profiles || [])
+        setStockLocations(slRes.stock_locations || [])
+        
+        if (scRes.sales_channels?.length) {
+          setSelectedSalesChannel(scRes.sales_channels[0].id)
+        }
+        if (spRes.shipping_profiles?.length) {
+          setSelectedShippingProfile(spRes.shipping_profiles[0].id)
+        }
+        if (slRes.stock_locations?.length) {
+          setSelectedStockLocation(slRes.stock_locations[0].id)
+        }
+      } catch (e) {
+        console.error("Failed to load store settings", e)
+      }
+    }
+    loadDefaults()
+  }, [])
 
   function detailsToText(details?: Record<string, string>) {
     const entries = Object.entries(details ?? {})
@@ -186,6 +223,8 @@ export default function ZeptoImportPage() {
         origin_country: editedProduct.origin_country || undefined,
         material: editedProduct.material || undefined,
         external_id: editedProduct.external_id || undefined,
+        sales_channels: selectedSalesChannel ? [{ id: selectedSalesChannel }] : undefined,
+        shipping_profile_id: selectedShippingProfile || undefined,
         metadata: {
           zepto_url: editedProduct.raw_url,
           zepto_brand: editedProduct.brand,
@@ -215,20 +254,25 @@ export default function ZeptoImportPage() {
 
       // Best-effort inventory sync for first stock location.
       const qty = editedProduct.inventory_quantity ?? 0
-      if (qty > 0) {
+      if (qty > 0 && selectedStockLocation) {
         try {
-          const stockLocations = await sdk.admin.stockLocation.list({ limit: 1 })
-          const locationId = stockLocations.stock_locations?.[0]?.id
+          const createdProduct = await sdk.admin.product.retrieve(result.product.id, {
+            fields: "id,*variants,+variants.inventory_items",
+          } as any)
 
-          if (locationId) {
-            const createdProduct = await sdk.admin.product.retrieve(result.product.id, {
-              fields: "id,*variants,+variants.inventory_items",
-            } as any)
+          const inventoryItemId = createdProduct.product?.variants?.[0]?.inventory_items?.[0]?.inventory_item_id
 
-            const inventoryItemId = createdProduct.product?.variants?.[0]?.inventory_items?.[0]?.inventory_item_id
-
-            if (inventoryItemId) {
-              await sdk.admin.inventoryItem.updateLevel(inventoryItemId, locationId, {
+          if (inventoryItemId) {
+            try {
+              await (sdk.client as any).fetch(`/admin/inventory-items/${inventoryItemId}/location-levels`, {
+                method: "POST",
+                body: {
+                  location_id: selectedStockLocation,
+                  stocked_quantity: qty,
+                }
+              })
+            } catch (createErr) {
+              await sdk.admin.inventoryItem.updateLevel(inventoryItemId, selectedStockLocation, {
                 stocked_quantity: qty,
               })
             }
@@ -422,6 +466,42 @@ export default function ZeptoImportPage() {
                   className={inputCls + " resize-y min-h-[80px]"}
                 />
               </Field>
+
+              <div className="grid grid-cols-3 gap-x-4">
+                <Field label="Sales Channel">
+                  <select
+                    value={selectedSalesChannel}
+                    onChange={(e) => setSelectedSalesChannel(e.target.value)}
+                    className={inputCls}
+                  >
+                    {salesChannels.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Shipping Profile">
+                  <select
+                    value={selectedShippingProfile}
+                    onChange={(e) => setSelectedShippingProfile(e.target.value)}
+                    className={inputCls}
+                  >
+                    {shippingProfiles.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Stock Location">
+                  <select
+                    value={selectedStockLocation}
+                    onChange={(e) => setSelectedStockLocation(e.target.value)}
+                    className={inputCls}
+                  >
+                    {stockLocations.map((l) => (
+                      <option key={l.id} value={l.id}>{l.name}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
 
               <div className="grid grid-cols-2 gap-x-4">
                 <Field label="Brand">

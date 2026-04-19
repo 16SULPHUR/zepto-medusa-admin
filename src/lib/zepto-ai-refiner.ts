@@ -498,9 +498,9 @@ function getGeminiTimeoutMs(): number {
 function getGeminiMaxOutputTokens(): number {
     const parsed = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS)
     if (!Number.isFinite(parsed)) {
-        return 800
+        return 4096
     }
-    return Math.max(128, Math.min(2048, Math.round(parsed)))
+    return Math.max(128, Math.min(8192, Math.round(parsed)))
 }
 
 // ---------------------------------------------------------------------------
@@ -520,6 +520,7 @@ function buildPrompt(product: ZeptoProduct): string {
         shelf_life: product.shelf_life,
         origin_country: product.origin_country,
         handle: product.handle,
+        extra_details: product.extra_details,
         variants: product.variants?.map((v) => ({
             title: v.title,
             sku: v.sku,
@@ -532,6 +533,8 @@ function buildPrompt(product: ZeptoProduct): string {
         "Return ONE valid JSON object only. No markdown. No explanation. No extra keys.",
         "Rules:",
         "- Improve title (title-case, clear), subtitle, description (2-3 sentences), brand, product_type, tags, material, shelf_life, and variant title only if messy.",
+        "- Clean up extra_details: thoroughly remove any UI garbage text, ratings (e.g. '4.7(6.0k)'), prices (e.g. 'MRP ₹885', '₹228 OFF'), or promotional text ('Get at...', 'View all offers'). Keep only genuine product specifications. Remove a key entirely if its value becomes empty.",
+        "- If 'raw_page_text' is present in extra_details, extract ALL relevant product specifications (like packaging, concern, ingredients, features) from it into new keys within extra_details. You MUST then delete the 'raw_page_text' key.",
         "- Keep handle slug-safe lowercase, no spaces.",
         "- Keep origin_country as 2-letter ISO code (default IN).",
         "- tags: lowercase, unique, max 10, relevant to product.",

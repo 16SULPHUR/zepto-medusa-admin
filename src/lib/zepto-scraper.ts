@@ -187,12 +187,17 @@ function normalizeImageUrl(url: string): string {
     return ""
   }
 
+  let finalUrl = ""
   if (cleaned.startsWith("//")) {
-    return `https:${cleaned}`
+    finalUrl = `https:${cleaned}`
+  } else if (/^https?:\/\//i.test(cleaned)) {
+    finalUrl = cleaned
   }
 
-  if (/^https?:\/\//i.test(cleaned)) {
-    return cleaned
+  if (finalUrl) {
+    let u = finalUrl.split("?")[0]
+    u = u.replace(/\/tr:[^\/]+\//, "/")
+    return u
   }
 
   return ""
@@ -637,6 +642,9 @@ export async function scrapeZeptoProduct(url: string): Promise<ZeptoProduct> {
 
   if (unit && !extra_details["unit"]) {
     extra_details["unit"] = unit
+  }
+  if (Object.keys(extra_details).length <= 2 && visibleText) {
+    extra_details["raw_page_text"] = sanitizeValue(visibleText, 2500)
   }
   if (packagingType && !extra_details["packaging type"]) {
     extra_details["packaging type"] = packagingType

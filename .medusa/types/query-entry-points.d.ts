@@ -345,78 +345,6 @@ export type PricePreference = {
   deleted_at: Maybe<Scalars['DateTime']['output']>;
 };
 
-export type CustomerAddress = {
-  __typename?: 'CustomerAddress';
-  id: Scalars['ID']['output'];
-  address_name: Maybe<Scalars['String']['output']>;
-  is_default_shipping: Scalars['Boolean']['output'];
-  is_default_billing: Scalars['Boolean']['output'];
-  company: Maybe<Scalars['String']['output']>;
-  first_name: Maybe<Scalars['String']['output']>;
-  last_name: Maybe<Scalars['String']['output']>;
-  address_1: Maybe<Scalars['String']['output']>;
-  address_2: Maybe<Scalars['String']['output']>;
-  city: Maybe<Scalars['String']['output']>;
-  country_code: Maybe<Scalars['String']['output']>;
-  province: Maybe<Scalars['String']['output']>;
-  postal_code: Maybe<Scalars['String']['output']>;
-  phone: Maybe<Scalars['String']['output']>;
-  metadata: Maybe<Scalars['JSON']['output']>;
-  customer_id: Scalars['String']['output'];
-  customer: Customer;
-  created_at: Scalars['DateTime']['output'];
-  updated_at: Scalars['DateTime']['output'];
-  deleted_at: Maybe<Scalars['DateTime']['output']>;
-};
-
-export type CustomerGroupCustomer = {
-  __typename?: 'CustomerGroupCustomer';
-  id: Scalars['ID']['output'];
-  created_by: Maybe<Scalars['String']['output']>;
-  metadata: Maybe<Scalars['JSON']['output']>;
-  customer_id: Scalars['String']['output'];
-  customer: Customer;
-  customer_group_id: Scalars['String']['output'];
-  customer_group: CustomerGroup;
-  created_at: Scalars['DateTime']['output'];
-  updated_at: Scalars['DateTime']['output'];
-  deleted_at: Maybe<Scalars['DateTime']['output']>;
-};
-
-export type CustomerGroup = {
-  __typename?: 'CustomerGroup';
-  id: Scalars['ID']['output'];
-  name: Scalars['String']['output'];
-  metadata: Maybe<Scalars['JSON']['output']>;
-  created_by: Maybe<Scalars['String']['output']>;
-  customers: Array<Maybe<Customer>>;
-  created_at: Scalars['DateTime']['output'];
-  updated_at: Scalars['DateTime']['output'];
-  deleted_at: Maybe<Scalars['DateTime']['output']>;
-};
-
-export type Customer = {
-  __typename?: 'Customer';
-  id: Scalars['ID']['output'];
-  company_name: Maybe<Scalars['String']['output']>;
-  first_name: Maybe<Scalars['String']['output']>;
-  last_name: Maybe<Scalars['String']['output']>;
-  email: Maybe<Scalars['String']['output']>;
-  phone: Maybe<Scalars['String']['output']>;
-  has_account: Scalars['Boolean']['output'];
-  metadata: Maybe<Scalars['JSON']['output']>;
-  created_by: Maybe<Scalars['String']['output']>;
-  groups: Array<Maybe<CustomerGroup>>;
-  addresses: Array<Maybe<CustomerAddress>>;
-  created_at: Scalars['DateTime']['output'];
-  updated_at: Scalars['DateTime']['output'];
-  deleted_at: Maybe<Scalars['DateTime']['output']>;
-  account_holder_link: Maybe<Array<Maybe<LinkCustomerAccountHolder>>>;
-  account_holders: Maybe<Array<Maybe<AccountHolder>>>;
-  carts: Maybe<Array<Maybe<Cart>>>;
-  orders: Maybe<Array<Maybe<Order>>>;
-};
-
 export type PromotionTypeEnum =
   | 'standard'
   | 'buyget';
@@ -569,23 +497,76 @@ export type PromotionRuleValue = {
   deleted_at: Maybe<Scalars['DateTime']['output']>;
 };
 
-export type SalesChannel = {
-  __typename?: 'SalesChannel';
+export type CustomerAddress = {
+  __typename?: 'CustomerAddress';
   id: Scalars['ID']['output'];
-  name: Scalars['String']['output'];
-  description: Maybe<Scalars['String']['output']>;
-  is_disabled: Scalars['Boolean']['output'];
-  created_at: Scalars['DateTime']['output'];
+  address_name: Maybe<Scalars['String']['output']>;
+  is_default_shipping: Scalars['Boolean']['output'];
+  is_default_billing: Scalars['Boolean']['output'];
+  company: Maybe<Scalars['String']['output']>;
+  first_name: Maybe<Scalars['String']['output']>;
+  last_name: Maybe<Scalars['String']['output']>;
+  address_1: Maybe<Scalars['String']['output']>;
+  address_2: Maybe<Scalars['String']['output']>;
+  city: Maybe<Scalars['String']['output']>;
+  country_code: Maybe<Scalars['String']['output']>;
+  province: Maybe<Scalars['String']['output']>;
+  postal_code: Maybe<Scalars['String']['output']>;
+  phone: Maybe<Scalars['String']['output']>;
   metadata: Maybe<Scalars['JSON']['output']>;
+  customer_id: Scalars['String']['output'];
+  customer: Customer;
+  created_at: Scalars['DateTime']['output'];
   updated_at: Scalars['DateTime']['output'];
   deleted_at: Maybe<Scalars['DateTime']['output']>;
-  products_link: Maybe<Array<Maybe<LinkProductSalesChannel>>>;
-  api_keys_link: Maybe<Array<Maybe<LinkPublishableApiKeySalesChannel>>>;
-  publishable_api_keys: Maybe<Array<Maybe<ApiKey>>>;
+};
+
+export type CustomerGroupCustomer = {
+  __typename?: 'CustomerGroupCustomer';
+  id: Scalars['ID']['output'];
+  created_by: Maybe<Scalars['String']['output']>;
+  metadata: Maybe<Scalars['JSON']['output']>;
+  customer_id: Scalars['String']['output'];
+  customer: Customer;
+  customer_group_id: Scalars['String']['output'];
+  customer_group: CustomerGroup;
+  created_at: Scalars['DateTime']['output'];
+  updated_at: Scalars['DateTime']['output'];
+  deleted_at: Maybe<Scalars['DateTime']['output']>;
+};
+
+export type CustomerGroup = {
+  __typename?: 'CustomerGroup';
+  id: Scalars['ID']['output'];
+  name: Scalars['String']['output'];
+  metadata: Maybe<Scalars['JSON']['output']>;
+  created_by: Maybe<Scalars['String']['output']>;
+  customers: Array<Maybe<Customer>>;
+  created_at: Scalars['DateTime']['output'];
+  updated_at: Scalars['DateTime']['output'];
+  deleted_at: Maybe<Scalars['DateTime']['output']>;
+};
+
+export type Customer = {
+  __typename?: 'Customer';
+  id: Scalars['ID']['output'];
+  company_name: Maybe<Scalars['String']['output']>;
+  first_name: Maybe<Scalars['String']['output']>;
+  last_name: Maybe<Scalars['String']['output']>;
+  email: Maybe<Scalars['String']['output']>;
+  phone: Maybe<Scalars['String']['output']>;
+  has_account: Scalars['Boolean']['output'];
+  metadata: Maybe<Scalars['JSON']['output']>;
+  created_by: Maybe<Scalars['String']['output']>;
+  groups: Array<Maybe<CustomerGroup>>;
+  addresses: Array<Maybe<CustomerAddress>>;
+  created_at: Scalars['DateTime']['output'];
+  updated_at: Scalars['DateTime']['output'];
+  deleted_at: Maybe<Scalars['DateTime']['output']>;
+  account_holder_link: Maybe<Array<Maybe<LinkCustomerAccountHolder>>>;
+  account_holders: Maybe<Array<Maybe<AccountHolder>>>;
   carts: Maybe<Array<Maybe<Cart>>>;
   orders: Maybe<Array<Maybe<Order>>>;
-  locations_link: Maybe<Array<Maybe<LinkSalesChannelStockLocation>>>;
-  stock_locations: Maybe<Array<Maybe<StockLocation>>>;
 };
 
 export type Cart = {
@@ -781,6 +762,25 @@ export type ShippingMethodTaxLine = {
   created_at: Scalars['DateTime']['output'];
   updated_at: Scalars['DateTime']['output'];
   deleted_at: Maybe<Scalars['DateTime']['output']>;
+};
+
+export type SalesChannel = {
+  __typename?: 'SalesChannel';
+  id: Scalars['ID']['output'];
+  name: Scalars['String']['output'];
+  description: Maybe<Scalars['String']['output']>;
+  is_disabled: Scalars['Boolean']['output'];
+  created_at: Scalars['DateTime']['output'];
+  metadata: Maybe<Scalars['JSON']['output']>;
+  updated_at: Scalars['DateTime']['output'];
+  deleted_at: Maybe<Scalars['DateTime']['output']>;
+  products_link: Maybe<Array<Maybe<LinkProductSalesChannel>>>;
+  api_keys_link: Maybe<Array<Maybe<LinkPublishableApiKeySalesChannel>>>;
+  publishable_api_keys: Maybe<Array<Maybe<ApiKey>>>;
+  carts: Maybe<Array<Maybe<Cart>>>;
+  orders: Maybe<Array<Maybe<Order>>>;
+  locations_link: Maybe<Array<Maybe<LinkSalesChannelStockLocation>>>;
+  stock_locations: Maybe<Array<Maybe<StockLocation>>>;
 };
 
 export type Region = {
@@ -2248,14 +2248,6 @@ declare module '@medusajs/framework/types' {
     prices: Price
     price_preference: PricePreference
     price_preferences: PricePreference
-    customer_address: CustomerAddress
-    customer_addresses: CustomerAddress
-    customer_group_customer: CustomerGroupCustomer
-    customer_group_customers: CustomerGroupCustomer
-    customer_group: CustomerGroup
-    customer_groups: CustomerGroup
-    customer: Customer
-    customers: Customer
     promotion: Promotion
     promotions: Promotion
     application_method: ApplicationMethod
@@ -2270,8 +2262,14 @@ declare module '@medusajs/framework/types' {
     promotion_rules: PromotionRule
     promotion_rule_value: PromotionRuleValue
     promotion_rule_values: PromotionRuleValue
-    sales_channel: SalesChannel
-    sales_channels: SalesChannel
+    customer_address: CustomerAddress
+    customer_addresses: CustomerAddress
+    customer_group_customer: CustomerGroupCustomer
+    customer_group_customers: CustomerGroupCustomer
+    customer_group: CustomerGroup
+    customer_groups: CustomerGroup
+    customer: Customer
+    customers: Customer
     cart: Cart
     carts: Cart
     credit_line: CreditLine
@@ -2290,6 +2288,8 @@ declare module '@medusajs/framework/types' {
     shipping_method_adjustments: ShippingMethodAdjustment
     shipping_method_tax_line: ShippingMethodTaxLine
     shipping_method_tax_lines: ShippingMethodTaxLine
+    sales_channel: SalesChannel
+    sales_channels: SalesChannel
     region: Region
     regions: Region
     country: Country

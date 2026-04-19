@@ -14,7 +14,7 @@ import { ArrowDownTray, CheckCircle, ExclamationCircle, Spinner, ShoppingBag } f
 import { useState, useEffect } from "react"
 
 // ── Medusa Admin SDK hooks ────────────────────────────────────────────────────
-import { sdk } from "../lib/sdk.js"
+import { sdk, backendUrl } from "../lib/sdk.js"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ZeptoVariant {
@@ -88,11 +88,11 @@ export default function ZeptoImportPage() {
           sdk.admin.shippingProfile.list({ limit: 100 }),
           sdk.admin.stockLocation.list({ limit: 100 })
         ])
-        
+
         setSalesChannels(scRes.sales_channels || [])
         setShippingProfiles(spRes.shipping_profiles || [])
         setStockLocations(slRes.stock_locations || [])
-        
+
         if (scRes.sales_channels?.length) {
           setSelectedSalesChannel(scRes.sales_channels[0].id)
         }
@@ -150,7 +150,8 @@ export default function ZeptoImportPage() {
     setErrorMsg("")
 
     try {
-      const res = await fetch("/admin/zepto-import", {
+      const fullUrl = `${backendUrl.replace(/\/+$/, "")}/admin/zepto-import`
+      const res = await fetch(fullUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -161,6 +162,7 @@ export default function ZeptoImportPage() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Failed to fetch product")
+
       setAiMeta(data.ai ?? null)
       setEditedProduct({
         ...data.product,
@@ -254,24 +256,38 @@ export default function ZeptoImportPage() {
 
       // Best-effort inventory sync for first stock location.
       const qty = editedProduct.inventory_quantity ?? 0
-      if (qty > 0 && selectedStockLocation) {
+      if (qty >= 0 && selectedStockLocation) {
         try {
           const createdProduct = await sdk.admin.product.retrieve(result.product.id, {
-            fields: "id,*variants,+variants.inventory_items",
+            fields: "*variants.inventory_items",
           } as any)
 
           const inventoryItemId = createdProduct.product?.variants?.[0]?.inventory_items?.[0]?.inventory_item_id
 
           if (inventoryItemId) {
             try {
-              await (sdk.client as any).fetch(`/admin/inventory-items/${inventoryItemId}/location-levels`, {
+              // We must use native fetch here because sdk.client.fetch drops the session credentials for some routes
+              const invUrl = `${backendUrl.replace(/\/+$/, "")}/admin/inventory-items/${inventoryItemId}/location-levels`
+              const invRes = await fetch(invUrl, {
                 method: "POST",
-                body: {
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify({
                   location_id: selectedStockLocation,
                   stocked_quantity: qty,
-                }
+                })
               })
+
+              if (!invRes.ok) {
+                const errData = await invRes.json()
+                console.warn("[zepto-import] create level failed:", errData)
+                // If it already exists, fallback to SDK updateLevel
+                await sdk.admin.inventoryItem.updateLevel(inventoryItemId, selectedStockLocation, {
+                  stocked_quantity: qty,
+                })
+              }
             } catch (createErr) {
+              console.warn("[zepto-import] inventory level creation error:", createErr)
               await sdk.admin.inventoryItem.updateLevel(inventoryItemId, selectedStockLocation, {
                 stocked_quantity: qty,
               })

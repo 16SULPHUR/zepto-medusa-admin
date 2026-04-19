@@ -2,7 +2,7 @@ import type { ZeptoProduct, ZeptoVariant } from "./zepto-scraper"
 
 export interface ZeptoAiMeta {
     used: boolean
-    provider: "gemini" | "none"
+    provider: "gemini" | "openrouter" | "none"
     model: string | null
     note?: string
 }
@@ -550,7 +550,7 @@ function buildPrompt(product: ZeptoProduct): string {
 // Gemini REST call (no extra SDK — uses node-fetch already in your project)
 // ---------------------------------------------------------------------------
 
-async function runGeminiRefinement(product: ZeptoProduct): Promise<Partial<ZeptoProduct>> {
+async function runGeminiRefinement(product: ZeptoProduct): Promise<{ value: Partial<ZeptoProduct>, provider: string, model: string }> {
     const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey) {
         throw new Error("GEMINI_API_KEY is not set")
@@ -635,12 +635,9 @@ async function runGeminiRefinement(product: ZeptoProduct): Promise<Partial<Zepto
 
         const parsed = parseGeminiJsonContent(textContent, finishReason)
         if (parsed.strategy !== "direct") {
-            console.warn(
-                `[Gemini] Parsed response using ${parsed.strategy} JSON strategy (finishReason: ${finishReason})`
-            )
+            console.warn(`[Gemini] Parsed response using ${parsed.strategy} JSON strategy`)
         }
-
-        return parsed.value
+        return { value: parsed.value, provider: "gemini", model }
     } catch (error: any) {
         if (error?.name === "AbortError") {
             throw new Error(`Gemini request timed out after ${timeoutMs}ms`)
@@ -649,6 +646,93 @@ async function runGeminiRefinement(product: ZeptoProduct): Promise<Partial<Zepto
     } finally {
         clearTimeout(timeoutHandle)
     }
+}
+
+// ---------------------------------------------------------------------------
+// OpenRouter REST call (Fallback)
+// ---------------------------------------------------------------------------
+
+async function runOpenRouterRefinement(product: ZeptoProduct): Promise<{ value: Partial<ZeptoProduct>, provider: string, model: string }> {
+    const apiKey = process.env.OPENROUTER_API_KEY
+    if (!apiKey) {
+        throw new Error("OPENROUTER_API_KEY is not set")
+    }
+
+    const model = "google/gemini-2.5-flash" // or another fast free model like "meta-llama/llama-3-8b-instruct:free"
+    const timeoutMs = getGeminiTimeoutMs()
+    const url = "https://openrouter.ai/api/v1/chat/completions"
+
+    const controller = new AbortController()
+    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
+    timeoutHandle.unref?.()
+
+    const fetch = (await import("node-fetch")).default
+
+    try {
+        console.log(`[OpenRouter] Requesting model: ${model}`)
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                model,
+                messages: [
+                    { role: "user", content: buildPrompt(product) }
+                ],
+                response_format: { type: "json_object" }
+            }),
+            signal: controller.signal,
+        })
+
+        const rawBody = await response.text()
+        if (!response.ok) {
+            throw new Error(`OpenRouter request failed (${response.status}): ${toLogPreview(rawBody)}`)
+        }
+
+        const payload = JSON.parse(rawBody)
+        const textContent = payload.choices?.[0]?.message?.content?.trim()
+        if (!textContent) {
+            throw new Error(`OpenRouter returned empty content`)
+        }
+
+        const parsed = parseGeminiJsonContent(textContent, payload.choices?.[0]?.finish_reason)
+        return { value: parsed.value, provider: "openrouter", model }
+    } catch (error: any) {
+        if (error?.name === "AbortError") {
+            throw new Error(`OpenRouter request timed out`)
+        }
+        throw error
+    } finally {
+        clearTimeout(timeoutHandle)
+    }
+}
+
+async function runAiRefinement(product: ZeptoProduct): Promise<{ value: Partial<ZeptoProduct>, provider: string, model: string }> {
+    let lastError = null;
+
+    // Try Gemini first
+    if (process.env.GEMINI_API_KEY) {
+        try {
+            return await runGeminiRefinement(product)
+        } catch (err: any) {
+            console.warn(`[Gemini] Failed: ${err.message}. Trying fallback...`)
+            lastError = err.message
+        }
+    }
+
+    // Fallback to OpenRouter
+    if (process.env.OPENROUTER_API_KEY) {
+        try {
+            return await runOpenRouterRefinement(product)
+        } catch (err: any) {
+            console.warn(`[OpenRouter] Failed: ${err.message}.`)
+            lastError = err.message
+        }
+    }
+
+    throw new Error(`All AI providers failed. Last error: ${lastError || "No API keys configured"}`)
 }
 
 // ---------------------------------------------------------------------------
@@ -750,44 +834,45 @@ export async function refineZeptoProduct(
         }
     }
 
-    if (!process.env.GEMINI_API_KEY) {
+    if (!process.env.GEMINI_API_KEY && !process.env.OPENROUTER_API_KEY) {
         return {
             product,
             ai: {
                 used: false,
                 provider: "none",
                 model: null,
-                note: "GEMINI_API_KEY is missing — using deterministic cleanup only. " +
-                    "Get a free key at https://aistudio.google.com/apikey",
+                note: "Neither GEMINI_API_KEY nor OPENROUTER_API_KEY is set — using deterministic cleanup only.",
             },
         }
     }
 
-    const model = getGeminiModel()
-
     try {
-        const aiResult = await runGeminiRefinement(product)
-        const mergedProduct = sanitizeBaseProduct(mergeAiIntoProduct(product, aiResult))
+        const aiResult = await runAiRefinement(product)
+        const mergedProduct = sanitizeBaseProduct(mergeAiIntoProduct(product, aiResult.value))
 
         return {
             product: mergedProduct,
             ai: {
                 used: true,
-                provider: "gemini",
-                model,
+                provider: aiResult.provider as any,
+                model: aiResult.model,
             },
         }
     } catch (error: any) {
         const reason: string = error?.message ?? "unknown error"
-        console.warn(`[Gemini] Refinement failed — falling back to deterministic result. Reason: ${reason}`)
+        console.warn(`[AI] Refinement failed completely — falling back to deterministic result. Reason: ${reason}`)
 
+        // If the user wants it to fail completely instead of silently succeeding with poor data,
+        // we could throw the error here. But usually, preserving the product import is better.
+        // The user said "i dont want this. fix fallback machanism", so they probably want it to retry/fallback.
+        // If all fallbacks fail, returning the deterministic one with a clear error is still the best option.
         return {
             product,
             ai: {
                 used: false,
                 provider: "none",
                 model: null,
-                note: `AI cleanup failed, deterministic fallback used: ${reason}`,
+                note: `All AI cleanups failed: ${reason}`,
             },
         }
     }

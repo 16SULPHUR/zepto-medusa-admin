@@ -17,8 +17,8 @@ module.exports = defineConfig({
     }
   },
   admin: {
-    // Avoid Docker root path conflicts (WORKDIR is /app by default in this project)
-    disable: process.env.DISABLE_MEDUSA_ADMIN === "true",
+    disable: false,
+    // disable: true,
     path: adminPath,
     backendUrl: process.env.MEDUSA_BACKEND_URL,
     storefrontUrl: process.env.MEDUSA_STOREFRONT_URL,

@@ -1,8 +1,9 @@
 import type { ZeptoProduct, ZeptoVariant } from "./zepto-scraper"
+import { ZeptoConfig } from "./zepto.config"
 
 export interface ZeptoAiMeta {
     used: boolean
-    provider: "gemini" | "openrouter" | "none"
+    provider: "gemini" | "none"
     model: string | null
     note?: string
 }
@@ -480,27 +481,16 @@ function toLogPreview(text: string, maxLen = 900): string {
 // ---------------------------------------------------------------------------
 // Gemini config helpers
 // ---------------------------------------------------------------------------
-
-function getGeminiModel(): string {
-    // gemini-2.0-flash: free tier, fast (~2-4s), 1 000 RPD, great quality
-    // Override via GEMINI_MODEL if you want e.g. "gemini-1.5-flash-8b" (even faster)
-    return cleanText(process.env.GEMINI_MODEL, 120) || "gemini-2.5-flash"
-}
-
-function getGeminiTimeoutMs(): number {
-    const parsed = Number(process.env.GEMINI_TIMEOUT_MS)
-    if (!Number.isFinite(parsed)) {
-        return 30000
+/** Parse "retry in Xs" from Gemini 429 error messages */
+function parseRetryAfterSeconds(errorMsg: string): number {
+    const match = errorMsg.match(/retry in ([\d.]+)s/i)
+    if (match) {
+        const seconds = parseFloat(match[1])
+        if (Number.isFinite(seconds) && seconds > 0 && seconds < 120) {
+            return Math.ceil(seconds) + 2 // add 2s buffer
+        }
     }
-    return Math.max(5000, Math.min(90000, Math.round(parsed)))
-}
-
-function getGeminiMaxOutputTokens(): number {
-    const parsed = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS)
-    if (!Number.isFinite(parsed)) {
-        return 4096
-    }
-    return Math.max(128, Math.min(8192, Math.round(parsed)))
+    return 30 // default 30s wait
 }
 
 // ---------------------------------------------------------------------------
@@ -534,6 +524,8 @@ function buildPrompt(product: ZeptoProduct): string {
         "Rules:",
         "- Improve title (title-case, clear), subtitle, description (2-3 sentences), brand, product_type, tags, material, shelf_life, and variant title only if messy.",
         "- Clean up extra_details: thoroughly remove any UI garbage text, ratings (e.g. '4.7(6.0k)'), prices (e.g. 'MRP ₹885', '₹228 OFF'), or promotional text ('Get at...', 'View all offers'). Keep only genuine product specifications. Remove a key entirely if its value becomes empty.",
+        "- Clean up variant title: It MUST only contain the actual size/unit (e.g. '1 pack (1 kg)'). Remove ALL prices, MRP, offers, and ratings from the variant title.",
+        "- Ensure NO field contains Zepto offers, cashback, or extra UI text.",
         "- If 'raw_page_text' is present in extra_details, extract ALL relevant product specifications (like packaging, concern, ingredients, features) from it into new keys within extra_details. You MUST then delete the 'raw_page_text' key.",
         "- Keep handle slug-safe lowercase, no spaces.",
         "- Keep origin_country as 2-letter ISO code (default IN).",
@@ -550,17 +542,14 @@ function buildPrompt(product: ZeptoProduct): string {
 // Gemini REST call (no extra SDK — uses node-fetch already in your project)
 // ---------------------------------------------------------------------------
 
-async function runGeminiRefinement(product: ZeptoProduct): Promise<{ value: Partial<ZeptoProduct>, provider: string, model: string }> {
-    const apiKey = process.env.GEMINI_API_KEY
-    if (!apiKey) {
-        throw new Error("GEMINI_API_KEY is not set")
-    }
+async function runGeminiRefinementWithKey(
+    product: ZeptoProduct,
+    apiKey: string,
+    model: string
+): Promise<{ value: Partial<ZeptoProduct>, provider: string, model: string }> {
+    const timeoutMs = ZeptoConfig.ai.timeoutMs
+    const maxOutputTokens = ZeptoConfig.ai.maxOutputTokens
 
-    const model = getGeminiModel()
-    const timeoutMs = getGeminiTimeoutMs()
-    const maxOutputTokens = getGeminiMaxOutputTokens()
-
-    // Plain REST — no additional dependency needed
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
 
     const controller = new AbortController()
@@ -570,9 +559,7 @@ async function runGeminiRefinement(product: ZeptoProduct): Promise<{ value: Part
     const fetch = (await import("node-fetch")).default
 
     try {
-        console.log(
-            `[Gemini] Requesting model: ${model} (timeout=${timeoutMs}ms, maxOutputTokens=${maxOutputTokens})`
-        )
+        console.log(`[Gemini] Requesting model: ${model} (key: ...${apiKey.slice(-6)})`)
 
         const requestBody = {
             contents: [
@@ -582,9 +569,8 @@ async function runGeminiRefinement(product: ZeptoProduct): Promise<{ value: Part
                 },
             ],
             generationConfig: {
-                temperature: 0.1,
+                temperature: 0.3,
                 maxOutputTokens,
-                // Tells Gemini to return pure JSON — avoids markdown fences
                 responseMimeType: "application/json",
             },
         }
@@ -597,12 +583,18 @@ async function runGeminiRefinement(product: ZeptoProduct): Promise<{ value: Part
         })
 
         const rawBody = await response.text()
-        console.log(
-            `[Gemini] Status: ${response.status}. Preview: ${toLogPreview(rawBody, 300)}`
-        )
+
+        // Handle 429 rate limit — throw special error so caller can retry
+        if (response.status === 429) {
+            const retryAfter = parseRetryAfterSeconds(rawBody)
+            const err = new Error(`RATE_LIMITED:${retryAfter}`) as any
+            err.retryAfterSeconds = retryAfter
+            err.isRateLimit = true
+            throw err
+        }
 
         if (!response.ok) {
-            throw new Error(`Gemini request failed (${response.status}): ${toLogPreview(rawBody)}`)
+            throw new Error(`Gemini request failed (${response.status}): ${toLogPreview(rawBody, 300)}`)
         }
 
         let payload: {
@@ -649,90 +641,68 @@ async function runGeminiRefinement(product: ZeptoProduct): Promise<{ value: Part
 }
 
 // ---------------------------------------------------------------------------
-// OpenRouter REST call (Fallback)
+// Gemini-only AI refinement with multi-key rotation and retry on 429
 // ---------------------------------------------------------------------------
 
-async function runOpenRouterRefinement(product: ZeptoProduct): Promise<{ value: Partial<ZeptoProduct>, provider: string, model: string }> {
-    const apiKey = process.env.OPENROUTER_API_KEY
-    if (!apiKey) {
-        throw new Error("OPENROUTER_API_KEY is not set")
-    }
+/** Track which key to use next (round-robin) */
+let geminiKeyIndex = 0
 
-    const model = "google/gemini-2.5-flash" // or another fast free model like "meta-llama/llama-3-8b-instruct:free"
-    const timeoutMs = getGeminiTimeoutMs()
-    const url = "https://openrouter.ai/api/v1/chat/completions"
-
-    const controller = new AbortController()
-    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
-    timeoutHandle.unref?.()
-
-    const fetch = (await import("node-fetch")).default
-
-    try {
-        console.log(`[OpenRouter] Requesting model: ${model}`)
-        const response = await fetch(url, {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${apiKey}`,
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                model,
-                messages: [
-                    { role: "user", content: buildPrompt(product) }
-                ],
-                response_format: { type: "json_object" }
-            }),
-            signal: controller.signal,
-        })
-
-        const rawBody = await response.text()
-        if (!response.ok) {
-            throw new Error(`OpenRouter request failed (${response.status}): ${toLogPreview(rawBody)}`)
-        }
-
-        const payload = JSON.parse(rawBody)
-        const textContent = payload.choices?.[0]?.message?.content?.trim()
-        if (!textContent) {
-            throw new Error(`OpenRouter returned empty content`)
-        }
-
-        const parsed = parseGeminiJsonContent(textContent, payload.choices?.[0]?.finish_reason)
-        return { value: parsed.value, provider: "openrouter", model }
-    } catch (error: any) {
-        if (error?.name === "AbortError") {
-            throw new Error(`OpenRouter request timed out`)
-        }
-        throw error
-    } finally {
-        clearTimeout(timeoutHandle)
-    }
+function sleepMs(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function runAiRefinement(product: ZeptoProduct): Promise<{ value: Partial<ZeptoProduct>, provider: string, model: string }> {
-    let lastError = null;
+    const keys = ZeptoConfig.ai.apiKeys
+    const models = ZeptoConfig.ai.models
+    if (keys.length === 0) {
+        throw new Error("No GEMINI_API_KEY configured. Set GEMINI_API_KEY (and optionally GEMINI_API_KEY_2, GEMINI_API_KEY_3) in .env")
+    }
 
-    // Try Gemini first
-    if (process.env.GEMINI_API_KEY) {
-        try {
-            return await runGeminiRefinement(product)
-        } catch (err: any) {
-            console.warn(`[Gemini] Failed: ${err.message}. Trying fallback...`)
-            lastError = err.message
+    const maxAttempts = keys.length * 2 // try each key up to 2 times
+    let lastError: string = ""
+
+    for (const model of models) {
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            const keyIdx = geminiKeyIndex % keys.length
+            const apiKey = keys[keyIdx]
+            geminiKeyIndex++ // rotate to next key for next call
+
+            try {
+                return await runGeminiRefinementWithKey(product, apiKey, model)
+            } catch (err: any) {
+                lastError = err.message || "Unknown error"
+
+                if (err.isRateLimit) {
+                    const waitSec = err.retryAfterSeconds || 30
+                    console.warn(`[Gemini] Key ...${apiKey.slice(-6)} rate limited on ${model}. Waiting ${waitSec}s before trying next key...`)
+
+                    // If we have more keys, try next one immediately
+                    if (keys.length > 1 && attempt < maxAttempts - 1) {
+                        console.log(`[Gemini] Rotating to next API key...`)
+                        continue
+                    }
+
+                    // Last resort: wait and retry same/next key
+                    if (attempt < maxAttempts - 1) {
+                        await sleepMs(waitSec * 1000)
+                        continue
+                    }
+                }
+
+                console.warn(`[Gemini] Model ${model} with Key ...${apiKey.slice(-6)} failed: ${lastError}`)
+
+                // If not rate limit and we have more keys, try next
+                if (attempt < maxAttempts - 1) {
+                    continue
+                }
+
+                // If we've exhausted attempts for this model, break the attempt loop to fall back to next model
+                break
+            }
         }
     }
 
-    // Fallback to OpenRouter
-    if (process.env.OPENROUTER_API_KEY) {
-        try {
-            return await runOpenRouterRefinement(product)
-        } catch (err: any) {
-            console.warn(`[OpenRouter] Failed: ${err.message}.`)
-            lastError = err.message
-        }
-    }
-
-    throw new Error(`All AI providers failed. Last error: ${lastError || "No API keys configured"}`)
+    throw new Error(`All Gemini API keys and models exhausted. Last error: ${lastError}`)
 }
 
 // ---------------------------------------------------------------------------
@@ -764,27 +734,27 @@ function mergeAiIntoProduct(base: ZeptoProduct, aiRaw: Partial<ZeptoProduct>): Z
     const variants =
         rawVariants.length > 0
             ? rawVariants
-                  .slice(0, 5)
-                  .map((v) =>
-                      normalizeVariant(
-                          v,
-                          baseVariant,
-                          brand || title,
-                          base.external_id || base.handle,
-                          originCountry,
-                          material
-                      )
-                  )
+                .slice(0, 5)
+                .map((v) =>
+                    normalizeVariant(
+                        v,
+                        baseVariant,
+                        brand || title,
+                        base.external_id || base.handle,
+                        originCountry,
+                        material
+                    )
+                )
             : [
-                  normalizeVariant(
-                      baseVariant,
-                      baseVariant,
-                      brand || title,
-                      base.external_id || base.handle,
-                      originCountry,
-                      material
-                  ),
-              ]
+                normalizeVariant(
+                    baseVariant,
+                    baseVariant,
+                    brand || title,
+                    base.external_id || base.handle,
+                    originCountry,
+                    material
+                ),
+            ]
 
     return {
         ...base,
@@ -834,14 +804,14 @@ export async function refineZeptoProduct(
         }
     }
 
-    if (!process.env.GEMINI_API_KEY && !process.env.OPENROUTER_API_KEY) {
+    if (ZeptoConfig.ai.apiKeys.length === 0) {
         return {
             product,
             ai: {
                 used: false,
                 provider: "none",
                 model: null,
-                note: "Neither GEMINI_API_KEY nor OPENROUTER_API_KEY is set — using deterministic cleanup only.",
+                note: "No GEMINI_API_KEY set — using deterministic cleanup only. Add GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3 to .env for AI cleanup.",
             },
         }
     }

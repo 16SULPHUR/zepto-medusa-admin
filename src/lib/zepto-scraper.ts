@@ -360,6 +360,22 @@ function extractKeyValuePairsFromRawJson(raw: string, blockName: string): Record
   return result
 }
 
+function cleanGarbageText(text: string): string {
+  let cleaned = text;
+  cleaned = cleaned.replace(/•\s*\d+\.\d+(?:\([^)]+\))?/g, " ");
+  cleaned = cleaned.replace(/MRP\s*₹?\s*[\d.,]+/gi, " ");
+  cleaned = cleaned.replace(/₹\s*[\d.,]+\s*(?:OFF)?/gi, " ");
+  cleaned = cleaned.replace(/\d+\s*%?\s*OFF/gi, " ");
+  cleaned = cleaned.replace(/\(incl\. of all taxes\)/gi, " ");
+  cleaned = cleaned.replace(/OFF(?=Coupons)/gi, " ");
+  cleaned = cleaned.replace(/\bOFF\b/gi, " ");
+  cleaned = cleaned.replace(/Coupons\s*&\s*Offers.*$/i, "");
+  cleaned = cleaned.replace(/Get upto.*Cashback.*/i, "");
+  cleaned = cleaned.replace(/Amazon Pay UPI.*/i, "");
+  cleaned = cleaned.replace(/₹/g, " ");
+  return normalizeSpace(cleaned);
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Main scrape function
 // ──────────────────────────────────────────────────────────────────────────────
@@ -504,13 +520,14 @@ export async function scrapeZeptoProduct(url: string): Promise<ZeptoProduct> {
 
   const unitFromTitle = extractUnitFromText(title)
 
-  const unit =
+  const rawUnit =
     pickFirstNonEmpty(
       highlights["unit"],
       highlights["net qty"],
       unitFromTitle,
       sanitizeValue(visibleText.match(/Net Qty[:\s]+([^|]{1,120})/i)?.[1] ?? "")
     )
+  const unit = cleanGarbageText(rawUnit)
 
   const packagingType =
     pickFirstNonEmpty(highlights["packaging type"], extractAfterLabel("packaging type"))
@@ -631,7 +648,7 @@ export async function scrapeZeptoProduct(url: string): Promise<ZeptoProduct> {
   const extra_details: Record<string, string> = {}
   for (const [rawKey, rawValue] of Object.entries({ ...highlights, ...information })) {
     const key = normalizeSpace(rawKey).toLowerCase()
-    const value = sanitizeValue(rawValue, 180)
+    const value = cleanGarbageText(sanitizeValue(rawValue, 180))
 
     if (!key || !value) {
       continue
